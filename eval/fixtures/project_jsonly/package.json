@@ -1,0 +1,12 @@
+{
+  "name": "js-utils",
+  "version": "1.0.0",
+  "description": "Test fixture with only pure-JS packages — no native dependencies at all",
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "axios": "^1.6.0",
+    "zod": "^3.22.0",
+    "date-fns": "^3.0.0",
+    "zustand": "^4.5.0"
+  }
+}

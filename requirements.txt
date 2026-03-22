@@ -1,0 +1,5 @@
+# Required for PDF generation (Step 9b)
+reportlab>=4.0
+
+# Optional — improves PDF metadata parsing (falls back to built-in parser if absent)
+pyyaml>=6.0

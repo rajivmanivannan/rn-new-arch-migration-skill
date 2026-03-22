@@ -1,0 +1,223 @@
+# LLM Eval test cases for the rn-new-arch-migration skill
+# Each case simulates a user asking Claude (loaded with SKILL.md) to audit a fixture project.
+
+cases:
+
+  - id: unmaintained_libs_identified
+    name: Unmaintained libraries are correctly flagged as interop with replacement advice
+    description: >
+      When given a project with react-native-snap-carousel and react-native-vector-icons
+      (both unmaintained per reactnative.directory), Claude must identify them as interop-OK
+      (not blocking) and recommend replacing them with maintained alternatives.
+      Unmaintained does NOT mean blocking — the interop layer handles legacy native modules.
+    fixture: project_blocking
+    prompt: "Audit this project for New Architecture readiness."
+    checks:
+      - type: contains
+        value: "react-native-snap-carousel"
+        case_insensitive: false
+      - type: contains
+        value: "react-native-vector-icons"
+        case_insensitive: false
+      - type: contains_any
+        values: ["interop", "Interop", "unmaintained", "replace"]
+        case_insensitive: true
+      - type: contains
+        value: "MIGRATION_AUDIT"
+        case_insensitive: false
+    grading_rubric: >
+      The response should identify react-native-snap-carousel and react-native-vector-icons
+      as unmaintained libraries that work under the interop layer but should be replaced with
+      maintained alternatives. They must NOT be classified as "blocking" — unmaintained is a
+      maintenance risk, not a technical blocker. It should suggest react-native-reanimated-carousel
+      as a replacement for snap-carousel. Score 10 if both libraries are correctly classified as
+      interop with replacement advice. Score 7 if identified but incorrectly marked as blocking.
+      Score 4 if only one is mentioned. Score 0 if neither is identified.
+
+  - id: two_tier_effort_estimate
+    name: Two-tier effort estimate separates "enable" from "full modernization"
+    description: >
+      Claude must provide a two-tier effort estimate: Tier 1 (effort to enable New Arch —
+      only true blockers) and Tier 2 (full modernization — library replacements, TurboModule
+      rewrites). Both must have time ranges in days and labels. Vendor modules listed separately.
+    fixture: project_blocking
+    prompt: >
+      Audit this project for New Architecture readiness and provide an effort estimate.
+    checks:
+      - type: contains_any
+        values: ["Tier 1", "tier 1", "Enable"]
+        case_insensitive: true
+      - type: contains_any
+        values: ["Tier 2", "tier 2", "Modernization", "modernization"]
+        case_insensitive: true
+      - type: contains_any
+        values: ["days", "day"]
+        case_insensitive: true
+      - type: contains_any
+        values: ["Low", "Moderate", "High", "Very High"]
+        case_insensitive: false
+    grading_rubric: >
+      The response must present TWO separate effort tiers. Tier 1 should cover only true
+      blockers (items that crash or fail to build — NOT unmaintained libraries). Tier 2
+      should cover recommended modernization (library replacements, TurboModule rewrites).
+      Both must show time ranges in days with labels. Tier 1 should be Low for most projects.
+      Vendor modules must be separate with "Depends on vendor". Score 10 if both tiers are
+      present with correct separation, math, and labels. Score 7 if two tiers exist but
+      items are miscategorized. Score 4 if only a single combined estimate is given.
+      Score 0 if no effort estimate is provided.
+
+  - id: owner_classification
+    name: In-house vs Vendor modules are correctly classified
+    description: >
+      Claude must classify native module findings as In-house (team's own code) or Vendor
+      (external SDK). Payment gateways like AcmePay should be Vendor, not In-house.
+      The developer action must differ based on ownership.
+    fixture: project_blocking
+    prompt: "Audit this project for New Architecture readiness."
+    checks:
+      - type: contains_any
+        values: ["In-house", "in-house", "Vendor", "vendor"]
+        case_insensitive: false
+      - type: contains
+        value: "AcmePay"
+        case_insensitive: false
+    grading_rubric: >
+      The response must include an Owner column or classification for native findings.
+      AcmePay must be classified as Vendor (payment gateway SDK), not In-house.
+      In-house modules should have "rewrite as TurboModule" action. Vendor modules should
+      have "check vendor for update" or similar action — NOT "rewrite".
+      Score 10 if all modules are correctly classified with appropriate actions.
+      Score 7 if classification is present but some modules are misclassified.
+      Score 4 if Owner column exists but all are labeled the same.
+      Score 0 if no ownership classification is present.
+
+  - id: ios_bridge_detected
+    name: iOS RCTBridgeModule pattern is detected
+    description: >
+      The blocking project has AcmePayModule.m with RCTBridgeModule, RCT_EXPORT_MODULE,
+      and RCT_EXPORT_METHOD. Claude must detect and report these patterns.
+    fixture: project_blocking
+    prompt: "Check my iOS native code for New Architecture compatibility issues."
+    checks:
+      - type: contains
+        value: "RCTBridgeModule"
+        case_insensitive: false
+      - type: contains
+        value: "AcmePayModule"
+        case_insensitive: false
+      - type: contains_any
+        values: ["TurboModule", "Codegen", "vendor", "Vendor"]
+        case_insensitive: true
+    grading_rubric: >
+      The response must identify RCTBridgeModule in AcmePayModule.m as a blocking iOS finding.
+      It should classify AcmePay as a Vendor module and recommend checking for a vendor update
+      (NOT rewriting it). Bonus if it mentions RCT_EXPORT_METHOD. Score 10 if file name, pattern,
+      correct ownership (Vendor), and appropriate action are all present. Score 7 if pattern and
+      file are mentioned but ownership is wrong. Score 4 if only the pattern type is mentioned
+      without the specific file. Score 0 if iOS bridge issues are not mentioned at all.
+
+  - id: android_bridge_detected
+    name: Android ReactContextBaseJavaModule pattern is detected
+    description: >
+      The blocking project has PaymentModule.java with ReactContextBaseJavaModule and
+      @ReactMethod. Claude must detect and report these patterns.
+    fixture: project_blocking
+    prompt: "Scan my Android native modules for New Architecture migration issues."
+    checks:
+      - type: contains
+        value: "ReactContextBaseJavaModule"
+        case_insensitive: false
+      - type: contains
+        value: "PaymentModule"
+        case_insensitive: false
+      - type: contains_any
+        values: ["@ReactMethod", "ReactMethod"]
+        case_insensitive: false
+    grading_rubric: >
+      The response must identify ReactContextBaseJavaModule and @ReactMethod in PaymentModule.java
+      as blocking Android findings. It should recommend rewriting as a TurboModule (if In-house)
+      or checking vendor (if Vendor). Bonus if WritableNativeMap is flagged. Score 10 if file,
+      pattern, tag, ownership, and remediation are present. Score 7 if patterns are identified
+      without specific file name. Score 4 if only the class name is mentioned.
+      Score 0 if no Android issues are reported.
+
+  - id: clean_project_low_effort
+    name: Clean project is recognized as nearly ready
+    description: >
+      The clean project has only compatible libraries and no native bridge code.
+      Claude should not report any blocking findings and should indicate low effort.
+    fixture: project_clean
+    prompt: "Is this app ready to enable newArchEnabled=true?"
+    checks:
+      - type: not_contains
+        value: "BLOCKING"
+        case_insensitive: false
+        description: "Should not shout BLOCKING for this project"
+      - type: contains_any
+        values: ["compatible", "ready", "low", "no blocking"]
+        case_insensitive: true
+    grading_rubric: >
+      The response should convey that this project has no blocking issues and is in good shape
+      for enabling New Architecture. It should note the compatible libraries found. It should NOT
+      fabricate blocking findings. Score 10 if a Low effort estimate is given (< 10 days) and
+      the project is clearly declared ready or near-ready. Score 7 if the response is positive
+      but vague. Score 4 if the response is neutral without a clear recommendation.
+      Score 0 if blocking issues are falsely reported.
+
+  - id: no_native_code_jsonly
+    name: JS-only project gets graceful audit
+    description: >
+      The jsonly project has no ios/ or android/ directories and no native dependencies.
+      Claude should handle this gracefully — skip native audits, note no native code found,
+      and produce a Low effort estimate.
+    fixture: project_jsonly
+    prompt: "Audit this project for New Architecture readiness."
+    checks:
+      - type: contains_any
+        values: ["skipped", "not found", "no native", "pure JS", "no ios", "no android"]
+        case_insensitive: true
+      - type: not_contains
+        value: "RCTBridgeModule"
+        case_insensitive: false
+    grading_rubric: >
+      The response should gracefully handle the absence of ios/ and android/ directories —
+      noting them as skipped or not present. It should recognize that all dependencies are
+      pure JS and require no New Arch changes. The effort estimate should be Low (< 10 days
+      or 0 days). Score 10 if the report notes both iOS and Android audits as skipped and
+      confirms all deps are pure JS. Score 7 if one is noted as skipped. Score 4 if the
+      response just says nothing was found without explaining why. Score 0 if errors are
+      reported or phantom findings are invented.
+
+  - id: how_to_use_section
+    name: Report includes "How to Use This Report" guidance for developers
+    description: >
+      The audit report must include a section that helps developers understand how to
+      interpret the report and work through the migration. It should explain the status
+      labels (Blocking, Interop-OK, Compatible, Unknown), the Owner column (In-house,
+      Vendor, RN-internal), the 4-phase migration workflow, and how to read the effort estimate.
+    fixture: project_blocking
+    prompt: "Audit this project for New Architecture readiness."
+    checks:
+      - type: contains
+        value: "How to Use This Report"
+        case_insensitive: false
+      - type: contains_any
+        values: ["In-house", "Vendor", "RN-internal"]
+        case_insensitive: false
+      - type: contains_any
+        values: ["Phase 1", "Phase 2", "Phase 3", "Phase 4"]
+        case_insensitive: false
+      - type: contains_any
+        values: ["interop layer", "Interop-OK", "interop"]
+        case_insensitive: true
+    grading_rubric: >
+      The response must include a "How to Use This Report" section that explains:
+      (1) What each status label means and what action to take for each,
+      (2) The difference between In-house, Vendor, and RN-internal ownership,
+      (3) The step-by-step migration workflow (fix blockers → enable → modernize → cleanup),
+      (4) How to read the two-tier effort estimate (Tier 1 enable vs Tier 2 modernization),
+      (5) That Interop-OK items don't block New Arch but should be migrated later.
+      Score 10 if all 5 topics are covered clearly with project-specific references.
+      Score 7 if the section exists but some topics are missing.
+      Score 4 if only a brief note about interpreting the report is present.
+      Score 0 if no developer guidance section is included.

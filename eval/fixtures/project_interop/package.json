@@ -1,0 +1,12 @@
+{
+  "name": "interop-app",
+  "version": "1.0.0",
+  "description": "Test fixture with interop-OK libraries and NativeEventEmitter usage",
+  "dependencies": {
+    "react-native": "0.74.0",
+    "@react-navigation/native": "^6.1.0",
+    "react-native-camera": "^4.2.0",
+    "react-native-splash-screen": "^3.3.0",
+    "lodash": "^4.17.21"
+  }
+}

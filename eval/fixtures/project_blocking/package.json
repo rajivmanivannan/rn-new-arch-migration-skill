@@ -1,0 +1,14 @@
+{
+  "name": "blocking-app",
+  "version": "1.0.0",
+  "description": "Test fixture with known blocking libraries and first-party bridge modules",
+  "dependencies": {
+    "react-native": "0.74.0",
+    "react-native-snap-carousel": "^3.9.1",
+    "react-native-vector-icons": "^9.2.0",
+    "@react-native-firebase/app": "^14.0.0",
+    "@react-navigation/native": "^6.1.0",
+    "lodash": "^4.17.21",
+    "axios": "^1.6.0"
+  }
+}

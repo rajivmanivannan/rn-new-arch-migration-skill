@@ -1,0 +1,5 @@
+pytest>=7.0
+pytest-cov
+anthropic>=0.40
+pyyaml>=6.0
+reportlab>=4.0
