@@ -805,9 +805,6 @@ def build_pdf(meta, body, out_path):
     story.append(SP(6))
 
     # ── Executive Summary — on Page 1, below TOC ──────────────────
-    story.append(Paragraph('EXECUTIVE SUMMARY', ST['toc_label']))
-    story.append(SP(3))
-
     card_data = [
         (effort_range, 'Effort Estimate', effort_color),
         (cmp_c,        'Compatible Libs', C_GREEN_800),
@@ -821,18 +818,22 @@ def build_pdf(meta, body, out_path):
 
     exec_text = parse_exec(body)
     if exec_text:
-        story.append(exec_box(exec_text, ST))
+        # Keep the section label together with the exec text so the heading
+        # is never orphaned on a different page from the narrative content.
+        story.append(KeepTogether([
+            Paragraph('EXECUTIVE SUMMARY', ST['toc_label']),
+            SP(3),
+            exec_box(exec_text, ST),
+        ]))
 
     # ════════════════════════════════════════════════════════════════
     # PAGE 3 — DEPENDENCY AUDIT
     # ════════════════════════════════════════════════════════════════
     story.append(PageBreak())
-    story.append(section_header('1', 'Dependency Audit', ST))
-    story.append(SP(4))
 
     dep_groups = parse_dep_groups(body)
 
-    for label, kind, headers, rows in dep_groups:
+    for grp_idx, (label, kind, headers, rows) in enumerate(dep_groups):
         # Detect the 3-equal-package-name grid used by the Compatible section.
         # That table has three columns all labelled "Package" — it must NOT be
         # treated as Package | Version | Notes (Version col is only 12% wide).
@@ -868,11 +869,20 @@ def build_pdf(meta, body, out_path):
                 ])
             col_headers = ['Package', 'Version', 'Notes']
 
-        block = KeepTogether([
-            group_bar(label, kind),
-            data_table(col_headers, rendered, pkg_cw, ST),
-        ])
-        story.append(block)
+        tbl = data_table(col_headers, rendered, pkg_cw, ST)
+        if grp_idx == 0:
+            # Keep section heading with the first group bar so the title is never
+            # orphaned alone on its page. The table is added separately so it can
+            # split across pages naturally (it may be 30+ rows).
+            story.append(KeepTogether([
+                section_header('1', 'Dependency Audit', ST),
+                SP(4),
+                group_bar(label, kind),
+            ]))
+            story.append(tbl)
+        else:
+            # For subsequent groups keep the bar with its table (smaller blocks).
+            story.append(KeepTogether([group_bar(label, kind), tbl]))
         story.append(SP(3))
 
     # ════════════════════════════════════════════════════════════════
@@ -932,16 +942,25 @@ def build_pdf(meta, body, out_path):
         ))
         story.append(SP(3))
 
-    story.append(SP(2))
-    story.append(section_header('3', 'iOS Native Findings', ST))
-    story.append(SP(4))
-
-    for _, kind, headers, rows in parse_findings(body, 'iOS Native Findings'):
+    # Section 3 has no PageBreak before it — header can float to bottom of the
+    # previous section's page. Keep heading + first table together so the title
+    # is always on the same page as at least the start of the table.
+    ios_findings = list(parse_findings(body, 'iOS Native Findings'))
+    for i, (_, kind, headers, rows) in enumerate(ios_findings):
         rendered = _render_findings_rows(rows, headers, ST)
-        story.append(data_table(
+        tbl = data_table(
             ['File', 'Ln', 'Pattern', 'Tag', 'Owner', 'Priority'],
             rendered, findings_cw, ST,
-        ))
+        )
+        if i == 0:
+            story.append(KeepTogether([
+                SP(2),
+                section_header('3', 'iOS Native Findings', ST),
+                SP(4),
+                tbl,
+            ]))
+        else:
+            story.append(tbl)
         story.append(SP(3))
 
     # ════════════════════════════════════════════════════════════════
@@ -959,20 +978,23 @@ def build_pdf(meta, body, out_path):
         ))
         story.append(SP(3))
 
-    story.append(SP(3))
-    story.append(section_header('5', 'Prioritized Action Plan', ST))
-    story.append(SP(4))
-
     phases = parse_action_plan(body)
     for pi, (title, steps) in enumerate(phases):
-        # For each phase, keep the bar together with its first step card so
-        # the heading never appears orphaned at the bottom of a page.
-        # This works for any dynamic content because step_card uses
-        # splitByRow=False, making each card atomic for KeepTogether.
+        # Build the anchor: phase bar + first step card (atomic via splitByRow=False)
+        # so the bar is never orphaned at the bottom of a page.
         anchor = [phase_bar(title, pi, ST), SP(2)]
         if steps:
             anchor += [step_card(1, steps[0][0], steps[0][1], ST), SP(1.5)]
-        story.append(KeepTogether(anchor))
+        if pi == 0:
+            # Keep the section header together with the first phase bar so the
+            # "Prioritized Action Plan" title is never orphaned without content.
+            story.append(KeepTogether([
+                SP(3),
+                section_header('5', 'Prioritized Action Plan', ST),
+                SP(4),
+            ] + anchor))
+        else:
+            story.append(KeepTogether(anchor))
         for si, (stitle, sdesc) in enumerate(steps[1:], start=2):
             story.append(step_card(si, stitle, sdesc, ST))
             story.append(SP(1.5))
@@ -1040,7 +1062,16 @@ def build_pdf(meta, body, out_path):
     # Optional effort breakdown table (if present in the markdown)
     effort_headers, effort_rows = parse_effort_table(body)
     if effort_headers and effort_rows:
-        eff_cw = [CW * 0.54, CW * 0.14, CW * 0.16, CW * 0.16]
+        # Determine column count dynamically from headers so widths always fit
+        # the actual table shape — prevents narrow columns when a 3-col table
+        # (Item | Developer Action | Effort) is rendered with 4-col widths.
+        n_cols = min(len(effort_headers), 4)
+        if n_cols <= 3:
+            # 3-col: Item wide, middle description column gets the most space
+            eff_cw = [CW * 0.35, CW * 0.50, CW * 0.15]
+        else:
+            # 4-col: Item | Platform/Action/Developer Action | Action | Effort
+            eff_cw = [CW * 0.30, CW * 0.18, CW * 0.36, CW * 0.16]
         rendered_eff = []
         for row in effort_rows:
             is_total = any('total' in c.lower() for c in row)
@@ -1049,12 +1080,12 @@ def build_pdf(meta, body, out_path):
                          textColor=sty.textColor, leading=sty.leading,
                          alignment=TA_RIGHT)
             r = [Paragraph(md2rl(row[0] if row else ''), sty)]
-            for cell in (row[1:4] if len(row) >= 4 else row[1:]):
+            for cell in row[1:n_cols]:
                 r.append(Paragraph(md2rl(cell), sty_r))
-            while len(r) < 4:
+            while len(r) < n_cols:
                 r.append(Paragraph('', ST['td']))
             rendered_eff.append(r)
-        story.append(data_table(effort_headers[:4], rendered_eff, eff_cw, ST))
+        story.append(data_table(effort_headers[:n_cols], rendered_eff, eff_cw, ST))
         story.append(SP(4))
 
     # Scan coverage cards
