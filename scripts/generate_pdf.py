@@ -91,6 +91,18 @@ def md2rl(text):
     text = re.sub(r'`([^`]+)`',
                   r'<font name="Courier" color="#1D4ED8">\1</font>', text)
     text = re.sub(r'^-{3,}$', '', text, flags=re.MULTILINE)
+    # Markdown links [label](url) → clickable blue hyperlink.
+    text = re.sub(
+        r'\[([^\]]+)\]\((https?://[^\)]+)\)',
+        r'<a href="\2" color="#1D4ED8">\1</a>',
+        text,
+    )
+    # Bare URLs not already inside an <a> tag → clickable, scheme stripped for display.
+    def _linkify(m):
+        url = m.group(0)
+        display = re.sub(r'^https?://', '', url)
+        return f'<a href="{url}" color="#1D4ED8">{display}</a>'
+    text = re.sub(r'(?<!href=")(https?://[^\s<>\])"]+)', _linkify, text)
     return text.strip()
 
 

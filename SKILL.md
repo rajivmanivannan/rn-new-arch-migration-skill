@@ -20,16 +20,17 @@ description: >
 
 > **⛔ ABSOLUTE RULE — READ FIRST:**
 >
-> **NEVER write a specific date (month, year, or day) for any SDK/library EOL, deprecation, or sunset.** This includes phrases like "EOL June 30 2026", "deprecated since 2024", "sunset Q3 2025", or any other date-based claim.
+> **NEVER write a specific date (month, year, or day) for any SDK/library EOL, deprecation, or sunset UNLESS you have verified it via `web_search` and can cite the exact official source URL in the same sentence.**
 >
-> **Self-check before writing any vendor SDK note:** Ask yourself: "Am I about to write a date, month, year, or deadline?" If yes — DELETE IT and cite a URL or write "status unverified" instead.
+> **Self-check before writing any vendor SDK note:** Ask yourself: "Did I verify this date via `web_search` and do I have the official source URL?" If no — DELETE the date and write "status unverified" instead.
 >
-> **What to write instead:**
-> - If `web_search` found a deprecation notice: `"Deprecated per [exact URL]. Vendor recommends [replacement]."`
+> **What to write:**
+> - If `web_search` confirmed a specific EOL date: `"Deprecated per [exact URL] — EOL [date]. Vendor recommends [replacement]."`
+> - If `web_search` found a deprecation notice but no specific date: `"Deprecated per [exact URL]. Vendor recommends [replacement]."`
 > - If `web_search` found NO deprecation notice: `"Maintenance status unverified — check [vendor docs URL]."`
 > - If you did NOT run `web_search` for this package: `"SDK status unverified."`
 >
-> **The format `"EOL [any date]"` is BANNED from all report output.** Even if you believe you verified it, do not write a date — write the source URL instead and let the reader check. This rule exists because LLMs (including you) hallucinate dates with high confidence. This applies to EVERY table cell, action plan step, effort estimate, and executive summary sentence. No exceptions.
+> **The rule is: date without source URL = BANNED.** A date is only valid when the source URL appears in the same sentence. This rule exists because LLMs hallucinate dates with high confidence — the URL is what makes the claim trustworthy. This applies to EVERY table cell, action plan step, effort estimate, and executive summary sentence. No exceptions.
 
 This skill audits a bare React Native project (or monorepo) and produces a date-stamped `MIGRATION_AUDIT_YYYYMMDD.md`. A styled PDF (`MIGRATION_AUDIT_YYYYMMDD.pdf`) is generated on request after the Markdown is delivered. It does NOT rewrite code — it identifies what needs to change, classifies severity, and gives the developer a clear, prioritized plan.
 
@@ -196,9 +197,9 @@ For every third-party SDK or library where you want to state deprecation, EOL, a
    - The **official vendor documentation** — look for: migration guides, sunset announcements, SDK changelog
    - The **npm/Maven/CocoaPods registry** — check: last publish date, weekly downloads, maintainer activity
 
-3. **Only after web verification**, you may state SDK status — and you **must cite the source**:
-   - ✅ `"frames-react-native — deprecated per github.com/checkout/frames-react-native (README notice, last publish 2024-01-15). Vendor recommends Checkout Flow SDK."`
-   - ✅ `"react-native-snap-carousel — unmaintained (last commit 2021-08, no response to issues). Works under interop layer."`
+3. **Only after web verification**, you may state SDK status — and you **must cite the source URL in the same sentence**. A specific EOL date is allowed only when the source URL is also present:
+   - ✅ `"frames-react-native — deprecated per checkout.com/docs/developer-resources/sdks/frames-sdks (EOL June 30, 2026). Vendor recommends Checkout Flow SDK."`
+   - ✅ `"react-native-snap-carousel — unmaintained per github.com/archriss/react-native-snap-carousel (last commit 2021-08, no response to issues). Works under interop layer."`
 
 4. **If web_search is unavailable or inconclusive**, you **must** flag the item with an uncertainty disclaimer instead of guessing:
    ```
@@ -207,17 +208,22 @@ For every third-party SDK or library where you want to state deprecation, EOL, a
 
 **Examples of correct vs incorrect behavior:**
 
-> **INCORRECT — BANNED FORMATS (hallucination risk):**
-> ❌ `"frames-react-native is EOL as of 2024 — migrate immediately."`
-> ❌ `"Deprecated — EOL June 30 2026."`
-> ❌ `"The EOL is June 30 2026 — this must be done regardless."`
-> ❌ Any sentence containing `"EOL"` followed by a date in any format
+> **INCORRECT — BANNED FORMATS (date with no source URL):**
+> ❌ `"frames-react-native is EOL as of 2024 — migrate immediately."` ← no source URL
+> ❌ `"Deprecated — EOL June 30 2026."` ← no source URL
+> ❌ `"The EOL is June 30 2026 — this must be done regardless."` ← no source URL
+> ❌ `"EOL is June 30 2026 — required regardless of New Arch work."` ← no source URL
+> ❌ Any EOL/deprecation claim without a cited source URL in the same sentence
 >
-> **CORRECT (web-verified with URL citation, NO date):**
-> ✅ `"frames-react-native — deprecated per github.com/checkout/frames-react-native (README deprecation notice). Vendor recommends Checkout Flow SDK."`
+> **CORRECT (web-verified — date + source URL together):**
+> ✅ `"frames-react-native — deprecated per checkout.com/docs/developer-resources/sdks/frames-sdks (EOL June 30, 2026). Vendor recommends Checkout Flow SDK."`
+> ✅ `"Deprecated per checkout.com/docs/developer-resources/sdks/frames-sdks — EOL June 30, 2026. Required regardless of New Arch work. Migrate to Checkout Flow SDK."`
+>
+> **CORRECT (web-verified — no specific date found):**
+> ✅ `"frames-react-native — deprecated per github.com/checkout/frames-react-native (README notice). Vendor recommends Checkout Flow SDK."`
 >
 > **CORRECT (when verification is not possible):**
-> ✅ `"⚠️ frames-react-native maintenance status unverified — check github.com/checkout/frames-react-native before acting on this."`
+> ✅ `"frames-react-native maintenance status unverified — confirm at github.com/checkout/frames-react-native before acting on this."`
 
 **This rule applies to ALL sections of the report** — dependency audit tables, action plan recommendations, effort estimates, and executive summary. The format `"EOL [any date]"` must NEVER appear in report output.
 
@@ -375,6 +381,12 @@ Use `-n` (not `-l`) so grep returns file paths with line numbers. Record every m
 
 Omit any phase that has no items (e.g. if there are no true blockers, skip Phase 1 and start with Phase 2 — Enable). Each step within a phase should have a numbered item with a bold title and a description line.
 
+> **Citation rule for action plan steps:** Any step description that references deprecation, EOL, or "required by vendor" status **must include the source URL in the same sentence**. A date alone — with no URL — is banned. A URL alone (no date) is fine. Both together is ideal.
+>
+> ❌ `"EOL is June 30 2026 — required regardless of New Arch work."` ← date, no URL
+> ✅ `"Deprecated per checkout.com/docs/developer-resources/sdks/frames-sdks — EOL June 30, 2026. Required regardless of New Arch work."`
+> ✅ `"Deprecated per checkout.com/docs/developer-resources/sdks/frames-sdks. Required regardless of New Arch work."` ← URL, no date, also valid
+
 > **Key insight for developers:** You do NOT need to rewrite all native modules before enabling New Architecture. Enable first (Phase 2), then modernize incrementally (Phase 3). The interop layer makes this safe.
 
 ---
@@ -418,7 +430,7 @@ Example breakdown format for the report:
 
 | Item | Developer Action | Effort |
 |------|-----------------|--------|
-| 1 deprecated library (frames-react-native — EOL June 2026) | Complete Checkout Flow migration | ~2–3 days |
+| 1 deprecated library (frames-react-native — deprecated per checkout.com/docs/developer-resources/sdks/frames-sdks, EOL June 30, 2026) | Complete Checkout Flow migration | ~2–3 days |
 | Enable newArchEnabled + build + test | Flip flag, pod install, test suite | ~1–2 days |
 | **Tier 1 total** | | **~3–5 days** |
 
