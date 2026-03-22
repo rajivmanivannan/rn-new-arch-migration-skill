@@ -22,10 +22,12 @@ description: >
 >
 > **NEVER write a specific date (month, year, or day) for any SDK/library EOL, deprecation, or sunset.** This includes phrases like "EOL June 30 2026", "deprecated since 2024", "sunset Q3 2025", or any other date-based claim.
 >
+> **Self-check before writing any vendor SDK note:** Ask yourself: "Am I about to write a date, month, year, or deadline?" If yes — DELETE IT and cite a URL or write "status unverified" instead.
+>
 > **What to write instead:**
 > - If `web_search` found a deprecation notice: `"Deprecated per [exact URL]. Vendor recommends [replacement]."`
 > - If `web_search` found NO deprecation notice: `"Maintenance status unverified — check [vendor docs URL]."`
-> - If you did NOT run `web_search` for this package: `"⚠️ SDK status unverified."`
+> - If you did NOT run `web_search` for this package: `"SDK status unverified."`
 >
 > **The format `"EOL [any date]"` is BANNED from all report output.** Even if you believe you verified it, do not write a date — write the source URL instead and let the reader check. This rule exists because LLMs (including you) hallucinate dates with high confidence. This applies to EVERY table cell, action plan step, effort estimate, and executive summary sentence. No exceptions.
 
@@ -276,9 +278,17 @@ This distinction is critical — developers should only focus on findings they o
 # Guard: skip entirely if ios/ does not exist
 [ -d ios ] && find ios/ \( -name "*.m" -o -name "*.mm" -o -name "*.swift" \) \
   | grep -v Pods | grep -v build | grep -v DerivedData \
-  | xargs grep -ln "RCTBridgeModule\|RCT_EXPORT_MODULE\|RCT_EXPORT_METHOD\|RCTViewManager\|RCT_EXTERN_MODULE" 2>/dev/null \
+  | xargs grep -n "RCTBridgeModule\|RCT_EXPORT_MODULE\|RCT_EXPORT_METHOD\|RCTViewManager\|RCT_EXTERN_MODULE" 2>/dev/null \
   || echo "ios/ not found — iOS audit skipped"
 ```
+
+Use `-n` (not `-l`) so grep returns file paths with line numbers. Record every match — each match becomes one row in the findings table.
+
+**iOS findings table format** — use exactly these 6 columns:
+
+| File | Line | Pattern | Tag | Owner | Priority |
+|------|------|---------|-----|-------|----------|
+| `ios/MyModule.m` | 42 | `RCTBridgeModule` | `IOS_BRIDGE_MODULE` | In-house | Interop-OK |
 
 | Pattern | Tag | Action |
 |---------|-----|--------|
@@ -298,9 +308,17 @@ This distinction is critical — developers should only focus on findings they o
 # Guard: skip entirely if android/ does not exist
 [ -d android/app/src ] && find android/app/src/ \( -name "*.java" -o -name "*.kt" \) \
   | grep -v build \
-  | xargs grep -ln "ReactContextBaseJavaModule\|@ReactMethod\|@ReactProp\|ReactPackage\|SimpleViewManager\|ViewGroupManager" 2>/dev/null \
+  | xargs grep -n "ReactContextBaseJavaModule\|@ReactMethod\|@ReactProp\|ReactPackage\|SimpleViewManager\|ViewGroupManager" 2>/dev/null \
   || echo "android/app/src/ not found — Android audit skipped"
 ```
+
+Use `-n` (not `-l`) so grep returns file paths with line numbers. Record every match — each match becomes one row in the findings table.
+
+**Android findings table format** — use exactly these 6 columns:
+
+| File | Line | Pattern | Tag | Owner | Priority |
+|------|------|---------|-----|-------|----------|
+| `android/app/src/main/java/com/app/MyModule.java` | 18 | `ReactContextBaseJavaModule` | `ANDROID_BASE_MODULE` | In-house | Interop-OK |
 
 | Pattern | Tag | Action |
 |---------|-----|--------|

@@ -28,6 +28,7 @@ try:
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
         HRFlowable, KeepTogether, PageBreak,
     )
+    from reportlab.platypus.flowables import CondPageBreak
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 except ImportError:
     print(
@@ -65,7 +66,26 @@ CW  = PAGE_W - ML - MR      # content width ≈ 481 pt
 
 
 # ── Markdown → ReportLab XML ─────────────────────────────────────────────────
+# Emoji that Helvetica (WinAnsiEncoding) cannot render — map to ASCII labels.
+_EMOJI_MAP = [
+    ('\u26A0\uFE0F', '[!]'), ('\u26A0', '[!]'),   # ⚠️  ⚠
+    ('\u2705', '[OK]'),                             # ✅
+    ('\u2714\uFE0F', '[OK]'), ('\u2714', '[OK]'),  # ✔️  ✔
+    ('\u274C', '[X]'),                              # ❌
+    ('\u274E', '[X]'),                              # ❎
+    ('\u2753', '[?]'),                              # ❓
+    ('\U0001F195', '[NEW]'),                        # 🆕
+    ('\u23F3', '[...]'),                            # ⏳
+    ('\uFE0F', ''),                                 # variation selector — silently strip
+]
+
+
 def md2rl(text):
+    # Strip emoji before XML-escaping so they don't become garbled squares.
+    for emoji, repl in _EMOJI_MAP:
+        text = text.replace(emoji, repl)
+    # Strip any remaining 4-byte (surrogate-plane) chars Helvetica can't handle.
+    text = re.sub(r'[\U00010000-\U0010FFFF]', '', text)
     text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'`([^`]+)`',
@@ -112,6 +132,9 @@ def make_styles():
                           textColor=C_BLUE_700, leading=11),
         'td_code':      S('td_code', fontName='Courier', fontSize=8,
                           textColor=C_GRAY_700, leading=11),
+        # Smaller Courier for the Pattern column where identifiers can be very long.
+        'td_pattern':   S('td_pattern', fontName='Courier', fontSize=7,
+                          textColor=C_GRAY_700, leading=10),
         'td_bold':      S('td_bold', fontName='Helvetica-Bold', fontSize=9.5,
                           textColor=C_BLACK, leading=13),
         'td_right':     S('td_right', fontSize=9.5, textColor=C_GRAY_700,
@@ -217,9 +240,20 @@ def group_bar(label_text, kind):
         'unk':    (C_GRAY_100,  C_GRAY_500,  C_GRAY_200),
     }
     bg, fg, border = palettes.get(kind, palettes['unk'])
-    icons = {'block': '❌', 'interop': '⚠️', 'ok': '✅', 'unk': '❓'}
+    icons = {'block': 'BLOCKED', 'interop': 'INTEROP-OK', 'ok': 'COMPATIBLE', 'unk': 'UNKNOWN'}
     icon = icons.get(kind, '')
-    p = Paragraph(f'<b>{icon}  {md2rl(label_text)}</b>',
+    # Strip any leading converted-emoji token ([!], [X], [OK], [?]) that md2rl
+    # may have introduced from the original markdown section heading so the
+    # status indicator doesn't appear twice (once as icon, once in label text).
+    label_clean = re.sub(r'^\[(?:!|X|OK|\?|NEW|\.\.\.)\]\s*', '', md2rl(label_text))
+    # Also strip the redundant status keyword that mirrors the icon label so
+    # the bar reads "INTEROP-OK  16 libraries" not "INTEROP-OK  Interop-OK — 16 libraries".
+    _status_words = {'block': 'Blocking', 'interop': 'Interop-OK',
+                     'ok': 'Compatible', 'unk': 'Unknown'}
+    _sw = _status_words.get(kind, '')
+    if _sw and label_clean.lower().startswith(_sw.lower()):
+        label_clean = label_clean[len(_sw):].lstrip(' \u2014-').strip()
+    p = Paragraph(f'<b>{icon}  {label_clean}</b>',
                   S('_gb', fontName='Helvetica-Bold', fontSize=8,
                     textColor=fg, leading=11))
     tbl = Table([[p]], colWidths=[CW])
@@ -290,9 +324,16 @@ def priority_cell(text, ST):
                        textColor=C_AMBER_800, leading=10))
 
 
-def exec_box(text, ST):
-    """Exec summary with left accent bar."""
-    tbl = Table([[Paragraph(md2rl(text), ST['exec_body'])]], colWidths=[CW])
+def exec_box(texts, ST):
+    """Exec summary with left accent bar. Accepts a string or list of strings."""
+    if isinstance(texts, str):
+        texts = [texts]
+    parts = [md2rl(t) for t in texts if t.strip()]
+    if not parts:
+        return Spacer(1, 1)
+    # Join paragraphs with a double line-break so each blockquote reads as its own block.
+    content = '<br/><br/>'.join(parts)
+    tbl = Table([[Paragraph(content, ST['exec_body'])]], colWidths=[CW])
     tbl.setStyle(TableStyle([
         ('BACKGROUND',   (0, 0), (-1, -1), C_GRAY_50),
         ('LINEBEFORE',   (0, 0), (0, -1),  3, C_GRAY_400),
@@ -322,22 +363,44 @@ def callout_box(items, ST):
     return tbl
 
 
-def metric_cards(data_items, ST):
-    """Row of 4 metric cards: (number_str, label, color_hex)."""
+def metric_cards(data_items, ST, col_weights=None):
+    """Row of metric cards: (number_str, label, color_hex).
+
+    col_weights — optional list of relative widths (default: equal).
+    Pass a larger weight for the first card to give a long string like
+    '~8–13 days' enough room to render at the same font size as short
+    numbers on the other cards.
+    """
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    n = len(data_items)
+    if col_weights is None:
+        col_weights = [1] * n
+    total_w = sum(col_weights)
+    # Outer column widths (include the 3pt gutter on each side)
+    outer_cws = [CW * w / total_w for w in col_weights]
+    # Inner card widths = outer minus gutter (3pt each side)
+    inner_cws = [w - 6 for w in outer_cws]
+
     cards = []
-    for num, lbl, col in data_items:
+    for i, (num, lbl, col) in enumerate(data_items):
+        card_w  = inner_cws[i]
+        inner_w = card_w - 28   # subtract 14pt padding each side
+        # Auto-scale so the value always fits on one line.
+        fs = 30
+        while stringWidth(num, 'Helvetica-Bold', fs) > inner_w and fs > 14:
+            fs -= 1
         num_p = Paragraph(num,
-                          S('_mn', fontName='Helvetica-Bold', fontSize=30,
-                            textColor=col, leading=34))
+                          S('_mn', fontName='Helvetica-Bold', fontSize=fs,
+                            textColor=col, leading=fs + 4))
         lbl_p = Paragraph(lbl.upper(), ST['metric_lbl'])
-        inner = Table([[num_p], [lbl_p]], colWidths=[CW / 4 - 6])
+        inner = Table([[num_p], [lbl_p]], colWidths=[card_w])
         inner.setStyle(TableStyle([
             ('LEFTPADDING',  (0, 0), (-1, -1), 0),
             ('RIGHTPADDING', (0, 0), (-1, -1), 0),
             ('TOPPADDING',   (0, 0), (-1, -1), 0),
             ('BOTTOMPADDING',(0, 0), (-1, -1), 2),
         ]))
-        cell = Table([[inner]], colWidths=[CW / 4 - 6])
+        cell = Table([[inner]], colWidths=[card_w])
         cell.setStyle(TableStyle([
             ('BOX',          (0, 0), (-1, -1), 0.5, C_GRAY_200),
             ('BACKGROUND',   (0, 0), (-1, -1), C_GRAY_50),
@@ -347,7 +410,7 @@ def metric_cards(data_items, ST):
             ('BOTTOMPADDING',(0, 0), (-1, -1), 12),
         ]))
         cards.append(cell)
-    outer = Table([cards], colWidths=[CW / 4] * 4)
+    outer = Table([cards], colWidths=outer_cws)
     outer.setStyle(TableStyle([
         ('LEFTPADDING',  (0, 0), (-1, -1), 3),
         ('RIGHTPADDING', (0, 0), (-1, -1), 3),
@@ -403,9 +466,11 @@ def step_card(num, title, desc, ST):
     content = [title_p]
     if desc.strip():
         content.append(Paragraph(md2rl(desc), ST['step_desc']))
-    # Stack title + desc in a nested table
+    # Stack title + desc in a nested table.
+    # splitByRow=False makes the card atomic so KeepTogether can reliably
+    # keep a phase bar together with its first step for any dynamic content.
     desc_rows = [[item] for item in content]
-    text_tbl = Table(desc_rows, colWidths=[CW - 46])
+    text_tbl = Table(desc_rows, colWidths=[CW - 46], splitByRow=False)
     text_tbl.setStyle(TableStyle([
         ('TOPPADDING',   (0, 0), (-1, -1), 1),
         ('BOTTOMPADDING',(0, 0), (-1, -1), 1),
@@ -488,11 +553,26 @@ def parse_md_table(text):
 
 
 def parse_exec(body):
+    """Return a list of paragraph strings from the Executive Summary section.
+    Each blockquote (> ...) becomes its own paragraph; blank lines are paragraph breaks.
+    """
     sec = get_section(body, 'Executive Summary')
-    lines = [l for l in sec.splitlines()
-             if l.strip() and not l.startswith('|') and not l.startswith('#')
-             and not l.startswith('---')]
-    return ' '.join(l.strip() for l in lines)
+    paragraphs = []
+    current = []
+    for raw in sec.splitlines():
+        l = raw.strip()
+        if not l or l.startswith('|') or l.startswith('#') or l == '---':
+            # Blank / structural line — flush current paragraph
+            if current:
+                paragraphs.append(' '.join(current))
+                current = []
+        else:
+            l = re.sub(r'^>\s*', '', l)  # strip Markdown blockquote prefix
+            if l:
+                current.append(l)
+    if current:
+        paragraphs.append(' '.join(current))
+    return paragraphs
 
 
 def parse_dep_groups(body):
@@ -722,7 +802,9 @@ def build_pdf(meta, body, out_path):
         (int_c,        'Interop-OK',      C_AMBER_800),
         (blk_c,        'Blocking Libs',   C_RED_800),
     ]
-    story.append(metric_cards(card_data, ST))
+    # Give the effort card extra width so "~8–13 days" renders at the same
+    # large font size as the single-number cards beside it.
+    story.append(metric_cards(card_data, ST, col_weights=[1.6, 0.8, 0.8, 0.8]))
     story.append(SP(3))
 
     exec_text = parse_exec(body)
@@ -737,25 +819,46 @@ def build_pdf(meta, body, out_path):
     story.append(SP(4))
 
     dep_groups = parse_dep_groups(body)
-    # Columns: Package | Version | Notes  (status conveyed by group bar colour)
-    dep_cw = [CW * 0.38, CW * 0.12, CW * 0.50]
 
     for label, kind, headers, rows in dep_groups:
-        rendered = []
-        for row in rows:
-            pkg   = row[0] if len(row) > 0 else ''
-            ver   = row[1] if len(row) > 1 else ''
-            # Skip the Status column (index 2) — conveyed by group bar
-            notes = row[3] if len(row) > 3 else (row[2] if len(row) > 2 else '')
-            rendered.append([
-                Paragraph(md2rl(pkg),   ST['td_pkg']),
-                Paragraph(md2rl(ver),   ST['td']),
-                Paragraph(md2rl(notes), ST['td']),
-            ])
-        col_headers = ['Package', 'Version', 'Notes']
+        # Detect the 3-equal-package-name grid used by the Compatible section.
+        # That table has three columns all labelled "Package" — it must NOT be
+        # treated as Package | Version | Notes (Version col is only 12% wide).
+        is_pkg_grid = (
+            len(headers) == 3
+            and all(h.strip().lower() == 'package' for h in headers)
+        )
+
+        if is_pkg_grid:
+            # Render as three equal-width package columns.
+            # Use td_pattern (7pt Courier) so long scoped names fit on fewer lines.
+            pkg_cw   = [CW / 3] * 3
+            rendered = []
+            for row in rows:
+                rendered.append([
+                    Paragraph(md2rl((row + ['', '', ''])[i]), ST['td_pattern'])
+                    for i in range(3)
+                ])
+            col_headers = ['Package', 'Package', 'Package']
+        else:
+            # Standard: Package | Version | Notes
+            pkg_cw   = [CW * 0.38, CW * 0.12, CW * 0.50]
+            rendered = []
+            for row in rows:
+                pkg   = row[0] if len(row) > 0 else ''
+                ver   = row[1] if len(row) > 1 else ''
+                # Skip the Status column (index 2) — conveyed by group bar colour
+                notes = row[3] if len(row) > 3 else (row[2] if len(row) > 2 else '')
+                rendered.append([
+                    Paragraph(md2rl(pkg),   ST['td_pkg']),
+                    Paragraph(md2rl(ver),   ST['td']),
+                    Paragraph(md2rl(notes), ST['td']),
+                ])
+            col_headers = ['Package', 'Version', 'Notes']
+
         block = KeepTogether([
             group_bar(label, kind),
-            data_table(col_headers, rendered, dep_cw, ST),
+            data_table(col_headers, rendered, pkg_cw, ST),
         ])
         story.append(block)
         story.append(SP(3))
@@ -767,29 +870,53 @@ def build_pdf(meta, body, out_path):
     story.append(section_header('2', 'JS / TS Source Findings', ST))
     story.append(SP(4))
 
-    # File | Lines | Pattern | Tag | Owner | Priority
-    js_cw = [CW * 0.25, CW * 0.08, CW * 0.23, CW * 0.17, CW * 0.12, CW * 0.15]
-    for heading, kind, headers, rows in parse_findings(body, 'JS/TS Source Findings'):
+    # Findings column layout: File | Lines | Pattern | Tag | Owner | Priority
+    # The Lines column is optional — iOS/Android tables omit it in the markdown.
+    # We detect this from the parsed headers and insert an empty placeholder so
+    # the pattern content always lands in the wide Pattern column, not Lines.
+    # File=20%, Ln=7%, Pattern=28%, Tag=12%, Owner=18%, Priority=15%
+    # Owner and Priority get more room so values like "In-house / Vendor" and "BLOCKING" don't squeeze.
+    findings_cw = [CW * 0.20, CW * 0.07, CW * 0.28, CW * 0.12, CW * 0.18, CW * 0.15]
+
+    def _render_findings_rows(rows, headers, ST):
+        has_lines = any('line' in h.lower() for h in headers)
         rendered = []
         for row in rows:
-            owner    = row[4] if len(row) > 4 else 'In-house'
-            priority = row[5] if len(row) > 5 else (row[4] if len(row) > 4 else 'Blocking')
-            # If owner looks like a priority (Blocking/Interop), shift columns
-            if owner.lower() in ('blocking', 'interop-ok', 'interop'):
-                priority, owner = owner, 'In-house'
+            if has_lines:
+                file_c = row[0] if len(row) > 0 else ''
+                line_c = row[1] if len(row) > 1 else ''
+                pat_c  = row[2] if len(row) > 2 else ''
+                tag_c  = row[3] if len(row) > 3 else ''
+                own_c  = row[4] if len(row) > 4 else 'In-house'
+                pri_c  = row[5] if len(row) > 5 else own_c
+            else:
+                # No Lines column — shift pattern/tag/owner/priority left by one.
+                file_c = row[0] if len(row) > 0 else ''
+                line_c = ''
+                pat_c  = row[1] if len(row) > 1 else ''
+                tag_c  = row[2] if len(row) > 2 else ''
+                own_c  = row[3] if len(row) > 3 else 'In-house'
+                pri_c  = row[4] if len(row) > 4 else own_c
+            # If owner cell contains a severity label, it was the last column.
+            if own_c.lower() in ('blocking', 'interop-ok', 'interop'):
+                pri_c, own_c = own_c, 'In-house'
             rendered.append([
-                Paragraph(md2rl(row[0] if row else ''),      ST['td_code']),
-                Paragraph(md2rl(row[1] if len(row) > 1 else ''), ST['td']),
-                Paragraph(md2rl(row[2] if len(row) > 2 else ''), ST['td_code']),
-                tag_cell(row[3] if len(row) > 3 else '', ST),
-                Paragraph(md2rl(owner), ST['td_bold'] if 'in-house' in owner.lower() else ST['td']),
-                priority_cell(priority, ST),
+                Paragraph(md2rl(file_c), ST['td_code']),
+                Paragraph(md2rl(line_c), ST['td']),
+                Paragraph(md2rl(pat_c),  ST['td_pattern']),
+                tag_cell(tag_c, ST),
+                Paragraph(md2rl(own_c),  ST['td_bold'] if 'in-house' in own_c.lower() else ST['td']),
+                priority_cell(pri_c, ST),
             ])
+        return rendered
+
+    for heading, kind, headers, rows in parse_findings(body, 'JS/TS Source Findings'):
+        rendered = _render_findings_rows(rows, headers, ST)
         if heading:
             story.append(group_bar(heading, kind))
         story.append(data_table(
-            ['File', 'Lines', 'Pattern', 'Tag', 'Owner', 'Priority'],
-            rendered, js_cw, ST,
+            ['File', 'Ln', 'Pattern', 'Tag', 'Owner', 'Priority'],
+            rendered, findings_cw, ST,
         ))
         story.append(SP(3))
 
@@ -797,26 +924,11 @@ def build_pdf(meta, body, out_path):
     story.append(section_header('3', 'iOS Native Findings', ST))
     story.append(SP(4))
 
-    # File | Lines | Pattern | Tag | Owner | Priority
-    ios_cw = [CW * 0.24, CW * 0.08, CW * 0.23, CW * 0.17, CW * 0.12, CW * 0.16]
     for _, kind, headers, rows in parse_findings(body, 'iOS Native Findings'):
-        rendered = []
-        for row in rows:
-            owner    = row[4] if len(row) > 4 else 'In-house'
-            priority = row[5] if len(row) > 5 else (row[4] if len(row) > 4 else 'Blocking')
-            if owner.lower() in ('blocking', 'interop-ok', 'interop'):
-                priority, owner = owner, 'In-house'
-            rendered.append([
-                Paragraph(md2rl(row[0] if row else ''),          ST['td_code']),
-                Paragraph(md2rl(row[1] if len(row) > 1 else ''), ST['td']),
-                Paragraph(md2rl(row[2] if len(row) > 2 else ''), ST['td_code']),
-                tag_cell(row[3] if len(row) > 3 else '', ST),
-                Paragraph(md2rl(owner), ST['td_bold'] if 'in-house' in owner.lower() else ST['td']),
-                priority_cell(priority, ST),
-            ])
+        rendered = _render_findings_rows(rows, headers, ST)
         story.append(data_table(
-            ['File', 'Lines', 'Pattern', 'Tag', 'Owner', 'Priority'],
-            rendered, ios_cw, ST,
+            ['File', 'Ln', 'Pattern', 'Tag', 'Owner', 'Priority'],
+            rendered, findings_cw, ST,
         ))
         story.append(SP(3))
 
@@ -827,25 +939,11 @@ def build_pdf(meta, body, out_path):
     story.append(section_header('4', 'Android Native Findings', ST))
     story.append(SP(4))
 
-    and_cw = [CW * 0.24, CW * 0.08, CW * 0.23, CW * 0.17, CW * 0.12, CW * 0.16]
     for _, kind, headers, rows in parse_findings(body, 'Android Native Findings'):
-        rendered = []
-        for row in rows:
-            owner    = row[4] if len(row) > 4 else 'In-house'
-            priority = row[5] if len(row) > 5 else (row[4] if len(row) > 4 else 'Blocking')
-            if owner.lower() in ('blocking', 'interop-ok', 'interop'):
-                priority, owner = owner, 'In-house'
-            rendered.append([
-                Paragraph(md2rl(row[0] if row else ''),          ST['td_code']),
-                Paragraph(md2rl(row[1] if len(row) > 1 else ''), ST['td']),
-                Paragraph(md2rl(row[2] if len(row) > 2 else ''), ST['td_code']),
-                tag_cell(row[3] if len(row) > 3 else '', ST),
-                Paragraph(md2rl(owner), ST['td_bold'] if 'in-house' in owner.lower() else ST['td']),
-                priority_cell(priority, ST),
-            ])
+        rendered = _render_findings_rows(rows, headers, ST)
         story.append(data_table(
-            ['File', 'Line', 'Pattern', 'Tag', 'Owner', 'Priority'],
-            rendered, and_cw, ST,
+            ['File', 'Ln', 'Pattern', 'Tag', 'Owner', 'Priority'],
+            rendered, findings_cw, ST,
         ))
         story.append(SP(3))
 
@@ -855,10 +953,16 @@ def build_pdf(meta, body, out_path):
 
     phases = parse_action_plan(body)
     for pi, (title, steps) in enumerate(phases):
-        story.append(phase_bar(title, pi, ST))
-        story.append(SP(2))
-        for si, (stitle, sdesc) in enumerate(steps):
-            story.append(step_card(si + 1, stitle, sdesc, ST))
+        # For each phase, keep the bar together with its first step card so
+        # the heading never appears orphaned at the bottom of a page.
+        # This works for any dynamic content because step_card uses
+        # splitByRow=False, making each card atomic for KeepTogether.
+        anchor = [phase_bar(title, pi, ST), SP(2)]
+        if steps:
+            anchor += [step_card(1, steps[0][0], steps[0][1], ST), SP(1.5)]
+        story.append(KeepTogether(anchor))
+        for si, (stitle, sdesc) in enumerate(steps[1:], start=2):
+            story.append(step_card(si, stitle, sdesc, ST))
             story.append(SP(1.5))
         story.append(SP(3))
 

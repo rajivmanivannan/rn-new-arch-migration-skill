@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.request
@@ -178,18 +179,36 @@ def lookup_package(pkg_name, pkg_version):
     if npm:
         if is_likely_pure_js(pkg_name, npm):
             return None
-        latest_ver = npm.get("dist-tags", {}).get("latest", "")
-        repo_url   = (npm.get("versions", {}).get(latest_ver, {})
-                      .get("repository", {}).get("url", ""))
+        latest_ver  = npm.get("dist-tags", {}).get("latest", "")
+        latest_meta = npm.get("versions", {}).get(latest_ver, {})
+        description = (npm.get("description") or "").strip()
+        homepage    = (npm.get("homepage") or latest_meta.get("homepage") or "").strip()
+        repo_url    = (latest_meta.get("repository", {}) or {}).get("url", "").strip()
+        npm_url     = f"https://www.npmjs.com/package/{pkg_name}"
+
+        note_parts = ["Not in reactnative.directory — manual verification required."]
+        if description:
+            note_parts.append(description)
+        links = []
+        if homepage and homepage.startswith("http"):
+            links.append(f"Homepage: {homepage}")
+        if repo_url:
+            # Clean up git+https:// prefix for readability
+            clean_repo = re.sub(r'^git\+', '', repo_url)
+            links.append(f"Repo: {clean_repo}")
+        links.append(f"npm: {npm_url}")
+        note_parts.extend(links)
+
         return {"package": pkg_name, "version": pkg_version,
                 "status": "unknown",
-                "notes": f"Not in reactnative.directory — verify manually. Repo: {repo_url}",
+                "notes": " | ".join(note_parts),
                 "source": "npm_fallback", "replacement": ""}
 
     # 4. Nothing worked
+    npm_url = f"https://www.npmjs.com/package/{pkg_name}"
     return {"package": pkg_name, "version": pkg_version,
             "status": "unknown",
-            "notes": "Could not fetch package data — verify manually",
+            "notes": f"Could not fetch package data — verify manually. npm: {npm_url}",
             "source": "none", "replacement": ""}
 
 
